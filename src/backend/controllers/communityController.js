@@ -5,6 +5,7 @@
  */
 const { pool } = require('../config/database');
 const { HttpError, text, int, oneOf, paging } = require('../utils/http');
+const { isAdmin } = require('../middlewares/authMiddleware');
 
 const BOARDS = [
   { key: 'free', name: '자유게시판' },
@@ -28,7 +29,7 @@ function presentAuthor(row, viewer) {
     ...rest,
     author: isAnonymous ? ANON_LABEL : nickname,
     isMine,
-    canManage: isMine || viewer?.member_type === 'admin'
+    canManage: isMine || isAdmin(viewer)
   };
 }
 
@@ -107,7 +108,7 @@ async function findManageablePost(req) {
   const id = int(req.params.id, { min: 1, nullable: false, label: '게시글 번호' });
   const [rows] = await pool.query("SELECT id, user_id FROM community_posts WHERE id = ? AND status = 'visible'", [id]);
   if (!rows[0]) throw new HttpError(404, '게시글을 찾을 수 없습니다.');
-  if (Number(rows[0].user_id) !== Number(req.user.id) && req.user.member_type !== 'admin') {
+  if (Number(rows[0].user_id) !== Number(req.user.id) && !isAdmin(req.user)) {
     throw new HttpError(403, '본인 글만 수정/삭제할 수 있습니다.');
   }
   return rows[0];
@@ -190,7 +191,7 @@ async function deleteComment(req, res) {
   );
   const comment = rows[0];
   if (!comment) throw new HttpError(404, '댓글을 찾을 수 없습니다.');
-  if (Number(comment.user_id) !== Number(req.user.id) && req.user.member_type !== 'admin') {
+  if (Number(comment.user_id) !== Number(req.user.id) && !isAdmin(req.user)) {
     throw new HttpError(403, '본인 댓글만 삭제할 수 있습니다.');
   }
   await pool.query("UPDATE community_comments SET status = 'deleted' WHERE id = ?", [commentId]);

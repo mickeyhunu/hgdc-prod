@@ -3,7 +3,7 @@
  */
 import { onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { api, session, formatPay, timeAgo, splitTags, PAY_TYPE_LABEL } from '../api.js';
+import { api, session, canPostJob, formatPay, timeAgo, splitTags, PAY_TYPE_LABEL } from '../api.js';
 import ReportButton from '../components/ReportButton.js';
 import Pager from '../components/Pager.js';
 
@@ -45,13 +45,13 @@ export const JobListPage = {
       load();
     });
 
-    return { session, meta, filters, result, error, apply, formatPay, timeAgo, splitTags, PAY_TYPE_LABEL };
+    return { session, canPostJob, meta, filters, result, error, apply, formatPay, timeAgo, splitTags, PAY_TYPE_LABEL };
   },
   template: `
     <section>
       <div class="page-head">
         <h2>구인 <small>업소 선수 모집</small></h2>
-        <router-link v-if="['business','admin'].includes(session.user?.memberType)" to="/jobs/new" class="btn primary sm">+ 공고 등록</router-link>
+        <router-link v-if="canPostJob(session.user)" to="/jobs/new" class="btn primary sm">+ 공고 등록</router-link>
       </div>
 
       <form class="filters" @submit.prevent="apply()">
@@ -183,12 +183,16 @@ export const JobFormPage = {
       }
     }
 
-    return { session, meta, form, isEdit, error, submit, PAY_TYPE_LABEL };
+    return { session, canPostJob, meta, form, isEdit, error, submit, PAY_TYPE_LABEL };
   },
   template: `
     <section class="form-page">
       <h2>{{ isEdit ? '구인공고 수정' : '구인공고 등록' }}</h2>
-      <p class="notice" v-if="!['business','admin'].includes(session.user.memberType)">구인공고는 업소 회원만 등록할 수 있습니다.</p>
+      <p class="notice" v-if="!canPostJob(session.user)">
+        구인공고는 <b>사업자등록증·영업허가증</b>을 제출하고 승인받은 회원만 등록할 수 있습니다.<br />
+        <span v-if="session.user.businessStatus === 'pending'">현재 제출하신 서류를 심사 중입니다.</span>
+        <span v-else>서류 제출 기능은 준비 중입니다.</span>
+      </p>
       <form v-else class="stack" @submit.prevent="submit">
         <input v-model.trim="form.title" maxlength="100" placeholder="제목 (예: 강남 OO 신규 선수 모집, 숙소 제공)" required />
         <div class="row-2">

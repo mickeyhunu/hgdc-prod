@@ -57,6 +57,20 @@ export function timeAgo(value) {
   return new Date(value).toLocaleDateString('ko-KR');
 }
 
+// 구인공고 작성 자격: 사업자등록증·영업허가증 승인 회원 또는 관리자
+export function canPostJob(user) {
+  return Boolean(user && (user.isAdmin || user.businessStatus === 'approved'));
+}
+
+export const BUSINESS_STATUS_LABEL = {
+  none: '일반 회원', pending: '사업자 인증 심사중', approved: '사업자 인증 회원', rejected: '사업자 인증 반려'
+};
+
+export function memberLabel(user) {
+  if (!user) return '';
+  return user.isAdmin ? '관리자' : BUSINESS_STATUS_LABEL[user.businessStatus] || '일반 회원';
+}
+
 export function splitTags(value) {
   return String(value || '').split(',').filter(Boolean);
 }

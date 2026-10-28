@@ -1,6 +1,12 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "hgdc", "runtimeExecutable": "node", "runtimeArgs": ["server.js"], "port": 8090 }
+    { "name": "hgdc", "runtimeExecutable": "node", "runtimeArgs": ["server.js"], "port": 8090 },
+    {
+      "name": "hgdc-test",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["-e", "require('./src/backend/config/loadEnv'); process.env.PORT = '8091'; process.env.KCP_CERT_ENV = 'mock'; process.env.KCP_RETURN_URL = ''; require('./server.js')"],
+      "port": 8091
+    }
   ]
 }

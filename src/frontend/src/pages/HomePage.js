@@ -2,7 +2,7 @@
  * 파일 역할: 메인 홈. 최신 구인공고 / 구직 이력서 / 커뮤니티 최신글·HOT 글 요약.
  */
 import { onMounted, ref } from 'vue';
-import { api, session, formatPay, formatCareer, timeAgo, splitTags, BOARD_LABEL } from '../api.js';
+import { api, session, canPostJob, formatPay, formatCareer, timeAgo, splitTags, BOARD_LABEL } from '../api.js';
 
 export default {
   setup() {
@@ -15,7 +15,7 @@ export default {
         error.value = requestError.message;
       }
     });
-    return { data, error, session, formatPay, formatCareer, timeAgo, splitTags, BOARD_LABEL };
+    return { data, error, session, canPostJob, formatPay, formatCareer, timeAgo, splitTags, BOARD_LABEL };
   },
   template: `
     <section>
@@ -24,7 +24,7 @@ export default {
           <h1>오늘 밤, 일할 곳 <span>찾았다.</span></h1>
           <p>전국 업소 선수 모집 공고와 선수 프로필을 한 곳에서.</p>
         </div>
-        <router-link v-if="session.user?.memberType === 'business'" to="/jobs/new" class="btn primary">+ 구인공고 등록</router-link>
+        <router-link v-if="canPostJob(session.user)" to="/jobs/new" class="btn primary">+ 구인공고 등록</router-link>
         <router-link v-else-if="session.user" to="/resumes/mine/edit" class="btn primary">+ 내 이력서 등록</router-link>
         <router-link v-else to="/signup" class="btn primary">19세 본인인증 가입</router-link>
       </div>

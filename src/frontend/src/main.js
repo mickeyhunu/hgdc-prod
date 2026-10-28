@@ -6,7 +6,8 @@
  */
 import { createApp } from 'vue';
 import { createRouter, createWebHistory } from 'vue-router';
-import { session, loadSession, api } from './api.js';
+import { session, loadSession } from './api.js';
+import HeaderMenu from './components/HeaderMenu.js';
 import LoginPage from './pages/LoginPage.js';
 import SignupPage from './pages/SignupPage.js';
 import HomePage from './pages/HomePage.js';
@@ -49,13 +50,9 @@ router.beforeEach(async (to) => {
 });
 
 const App = {
+  components: { HeaderMenu },
   setup() {
-    async function logout() {
-      await api('/auth/logout', { method: 'POST' });
-      session.user = null;
-      router.replace({ name: 'home' });
-    }
-    return { session, logout };
+    return { session };
   },
   template: `
     <div class="app">
@@ -66,10 +63,7 @@ const App = {
           <router-link to="/resumes">구직</router-link>
           <router-link to="/community">커뮤니티</router-link>
         </nav>
-        <div class="topbar-user" v-if="session.user">
-          <router-link to="/my" class="chip">{{ session.user.nickname }}</router-link>
-          <button class="link" @click="logout">로그아웃</button>
-        </div>
+        <HeaderMenu v-if="session.user" />
         <div class="topbar-user" v-else>
           <router-link :to="['login', 'signup'].includes($route.name) ? '/login' : { path: '/login', query: { next: $route.fullPath } }" class="btn primary sm">로그인</router-link>
         </div>

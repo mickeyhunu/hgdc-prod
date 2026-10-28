@@ -46,15 +46,79 @@ function splitSqlStatements(sql) {
     .filter(Boolean);
 }
 
+// CREATE TABLE IF NOT EXISTS 는 기존 테이블에 컬럼을 추가하지 않으므로, 이후 추가된 컬럼은 여기서 보정한다.
+// backfill 은 해당 컬럼이 기존 컬럼(member_type 등)에서 값을 옮겨와야 할 때만 쓴다.
+const ADDED_COLUMNS = [
+  { table: 'users', column: 'email', definition: "VARCHAR(100) NOT NULL DEFAULT '' AFTER phone" },
+  { table: 'users', column: 'marketing_agreed', definition: 'TINYINT(1) NOT NULL DEFAULT 0 AFTER email' },
+  { table: 'users', column: 'marketing_agreed_at', definition: 'DATETIME NULL AFTER marketing_agreed' },
+  {
+    table: 'users',
+    column: 'is_admin',
+    definition: 'TINYINT(1) NOT NULL DEFAULT 0 AFTER nickname',
+    backfill: "UPDATE users SET is_admin = 1 WHERE member_type = 'admin'"
+  },
+  {
+    table: 'users',
+    column: 'business_status',
+    definition: "ENUM('none','pending','approved','rejected') NOT NULL DEFAULT 'none' AFTER is_admin",
+    backfill: "UPDATE users SET business_status = 'approved' WHERE member_type = 'business'"
+  }
+];
+
+async function hasColumn(connection, table, column) {
+  const [rows] = await connection.query(
+    `SELECT 1 FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ? LIMIT 1`,
+    [table, column]
+  );
+  return rows.length > 0;
+}
+
+async function ensureColumns(connection) {
+  for (const { table, column, definition, backfill } of ADDED_COLUMNS) {
+    if (await hasColumn(connection, table, column)) continue;
+    await connection.query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`);
+    if (backfill && await hasColumn(connection, 'users', 'member_type')) await connection.query(backfill);
+  }
+}
+
+// 대상 DB 가 아직 없으면(최초 세팅) database 지정 없이 접속해서 먼저 만든다.
+async function ensureDatabaseExists() {
+  const { database, connectionLimit, ...serverConfig } = dbConfig;
+  if (!/^[A-Za-z0-9_$]+$/.test(database)) throw new Error(`허용되지 않는 DB 이름입니다: ${database}`);
+
+  const connection = await mysql.createConnection(serverConfig);
+  try {
+    const [rows] = await connection.query(
+      'SELECT 1 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ? LIMIT 1',
+      [database]
+    );
+    if (rows.length > 0) return false;
+    await connection.query(
+      `CREATE DATABASE IF NOT EXISTS \`${database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+    );
+    return true;
+  } finally {
+    await connection.end();
+  }
+}
+
 async function initDatabase() {
+  const autoMigrate = isEnabled(process.env.HGDC_DB_AUTO_MIGRATE ?? 'true');
+  if (autoMigrate && await ensureDatabaseExists()) {
+    console.log(`[DB] ${dbConfig.database} 데이터베이스가 없어 새로 생성했습니다.`);
+  }
+
   const connection = await pool.getConnection();
   try {
     await connection.ping();
-    if (isEnabled(process.env.HGDC_DB_AUTO_MIGRATE ?? 'true')) {
+    if (autoMigrate) {
       const schemaSql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
       for (const statement of splitSqlStatements(schemaSql)) {
         await connection.query(statement);
       }
+      await ensureColumns(connection);
     }
   } finally {
     connection.release();

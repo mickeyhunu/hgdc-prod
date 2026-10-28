@@ -11,7 +11,7 @@ const { cookieOptions, setSessionCookie, clearSessionCookie } = require('../midd
 const KCP_NONCE_COOKIE = 'hgdc_kcp_tx';
 const LOGIN_ID_PATTERN = /^[a-z0-9_]{4,20}$/;
 const NICKNAME_PATTERN = /^[가-힣a-zA-Z0-9_]{2,12}$/;
-const SIGNUP_MEMBER_TYPES = ['player', 'business'];
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -26,6 +26,13 @@ function maskName(name = '') {
   if (name.length <= 1) return '*';
   if (name.length === 2) return `${name[0]}*`;
   return `${name[0]}${'*'.repeat(name.length - 2)}${name[name.length - 1]}`;
+}
+
+function formatPhone(phone = '') {
+  const digits = String(phone).replace(/\D/g, '');
+  if (digits.length === 11) return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`;
+  if (digits.length === 10) return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+  return digits;
 }
 
 function siteOrigin(req) {
@@ -122,14 +129,20 @@ async function getIdentityResult(req, res) {
   const { identity } = transaction;
   const [rows] = await pool.query('SELECT login_id FROM users WHERE ci_hash = ? LIMIT 1', [kcp.hashCi(identity.ci)]);
   const existingLoginId = rows[0]?.login_id || '';
+  const adult = isAdult(identity.birthDate);
+  const canSignup = adult && !existingLoginId;
 
   return res.json({
     verified: true,
     maskedName: maskName(identity.name),
     age: displayAge(identity.birthDate),
-    isAdult: isAdult(identity.birthDate),
+    isAdult: adult,
     alreadyRegistered: Boolean(existingLoginId),
-    maskedLoginId: existingLoginId ? `${existingLoginId.slice(0, 3)}***` : ''
+    maskedLoginId: existingLoginId ? `${existingLoginId.slice(0, 3)}***` : '',
+    // 가입 폼 자동입력(읽기 전용 표시)용. 인증을 시작한 같은 브라우저에만 내려가며, 가입 시에는 서버 캐시 값만 저장한다.
+    profile: canSignup
+      ? { name: identity.name, birthDate: parseBirthDate(identity.birthDate)?.iso || '', phone: formatPhone(identity.phone) }
+      : null
   });
 }
 
@@ -148,12 +161,13 @@ async function signup(req, res) {
   const loginId = text(req.body.loginId, { required: true, label: '아이디', max: 20 }).toLowerCase();
   const password = String(req.body.password || '');
   const nickname = text(req.body.nickname, { required: true, label: '닉네임', max: 12 });
-  const memberType = oneOf(req.body.memberType, SIGNUP_MEMBER_TYPES, null);
+  const email = text(req.body.email, { label: '이메일', max: 100 }).toLowerCase(); // 선택 입력
+  const agreeMarketing = req.body.agreeMarketing === true ? 1 : 0; // 선택 동의
 
   if (!LOGIN_ID_PATTERN.test(loginId)) throw new HttpError(400, '아이디는 영문 소문자/숫자/_ 4~20자입니다.');
   if (password.length < 8 || password.length > 64) throw new HttpError(400, '비밀번호는 8~64자로 입력해주세요.');
   if (!NICKNAME_PATTERN.test(nickname)) throw new HttpError(400, '닉네임은 한글/영문/숫자 2~12자입니다.');
-  if (!memberType) throw new HttpError(400, '회원 유형(선수/업소)을 선택해주세요.');
+  if (email && !EMAIL_PATTERN.test(email)) throw new HttpError(400, '이메일 형식이 올바르지 않습니다.');
   if (req.body.agreeTerms !== true || req.body.agreePrivacy !== true) {
     throw new HttpError(400, '이용약관과 개인정보 처리방침에 동의해주세요.');
   }
@@ -161,10 +175,11 @@ async function signup(req, res) {
   let userId;
   try {
     const [result] = await pool.query(
-      `INSERT INTO users (login_id, password_hash, nickname, member_type, ci_hash, real_name, birth_date, gender, phone, verified_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())`,
-      [loginId, await hashPassword(password), nickname, memberType, kcp.hashCi(identity.ci),
-        identity.name, birth.iso, identity.gender, identity.phone]
+      `INSERT INTO users (login_id, password_hash, nickname, ci_hash, real_name, birth_date, gender, phone, email,
+                          marketing_agreed, marketing_agreed_at, verified_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, IF(? = 1, UTC_TIMESTAMP(), NULL), UTC_TIMESTAMP())`,
+      [loginId, await hashPassword(password), nickname, kcp.hashCi(identity.ci),
+        identity.name, birth.iso, identity.gender, identity.phone, email, agreeMarketing, agreeMarketing]
     );
     userId = result.insertId;
   } catch (error) {
@@ -178,8 +193,30 @@ async function signup(req, res) {
 
   kcp.consumeTransaction(regCertKey);
   res.clearCookie(KCP_NONCE_COOKIE, cookieOptions(req, undefined));
-  setSessionCookie(req, res, { id: userId, member_type: memberType });
-  res.status(201).json({ id: userId, nickname, memberType });
+  setSessionCookie(req, res, { id: userId });
+  res.status(201).json({ id: userId, nickname });
+}
+
+/** 가입 폼의 아이디/닉네임 중복확인. 형식 오류도 함께 알려준다. (최종 판정은 signup 의 UNIQUE 제약) */
+async function checkAvailability(req, res) {
+  const field = oneOf(req.query.field, ['loginId', 'nickname'], null);
+  if (!field) throw new HttpError(400, '확인할 항목이 올바르지 않습니다.');
+
+  const value = String(req.query.value || '').trim();
+  const normalized = field === 'loginId' ? value.toLowerCase() : value;
+  if (field === 'loginId' && !LOGIN_ID_PATTERN.test(normalized)) {
+    return res.json({ available: false, message: '아이디는 영문 소문자/숫자/_ 4~20자입니다.' });
+  }
+  if (field === 'nickname' && !NICKNAME_PATTERN.test(normalized)) {
+    return res.json({ available: false, message: '닉네임은 한글/영문/숫자 2~12자입니다.' });
+  }
+
+  const column = field === 'loginId' ? 'login_id' : 'nickname';
+  const [rows] = await pool.query(`SELECT 1 FROM users WHERE ${column} = ? LIMIT 1`, [normalized]);
+  const label = field === 'loginId' ? '아이디' : '닉네임';
+  return res.json(rows.length
+    ? { available: false, message: `이미 사용 중인 ${label}입니다.` }
+    : { available: true, message: `사용 가능한 ${label}입니다.` });
 }
 
 // 아이디+IP 기준 단순 로그인 시도 제한 (프로세스 메모리. 다중 인스턴스면 Redis 등으로 교체)
@@ -205,7 +242,7 @@ async function login(req, res) {
   checkLoginRateLimit(rateKey);
 
   const [rows] = await pool.query(
-    'SELECT id, password_hash, nickname, member_type, birth_date, status FROM users WHERE login_id = ? LIMIT 1',
+    'SELECT id, password_hash, nickname, status FROM users WHERE login_id = ? LIMIT 1',
     [loginId]
   );
   const user = rows[0];
@@ -217,7 +254,7 @@ async function login(req, res) {
   loginAttempts.delete(rateKey);
   await pool.query('UPDATE users SET last_login_at = UTC_TIMESTAMP() WHERE id = ?', [user.id]);
   setSessionCookie(req, res, user);
-  res.json({ id: user.id, nickname: user.nickname, memberType: user.member_type });
+  res.json({ id: user.id, nickname: user.nickname });
 }
 
 function logout(req, res) {
@@ -232,7 +269,8 @@ function me(req, res) {
       id: req.user.id,
       loginId: req.user.login_id,
       nickname: req.user.nickname,
-      memberType: req.user.member_type
+      isAdmin: Boolean(req.user.is_admin),
+      businessStatus: req.user.business_status
     }
   });
 }
@@ -243,6 +281,7 @@ module.exports = {
   kcpMockPage,
   kcpMockSubmit,
   getIdentityResult,
+  checkAvailability,
   signup,
   login,
   logout,

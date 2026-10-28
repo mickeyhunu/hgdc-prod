@@ -1,12 +1,13 @@
 /**
  * 파일 역할: 구인(업소 공고) / 구직(선수 이력서) API 컨트롤러.
  *
- * - 구인 공고 작성: business 회원
- * - 이력서 작성: player 회원 (1인 1이력서, upsert)
+ * - 구인 공고 작성: 사업자등록증·영업허가증 승인 회원 (business_status = 'approved')
+ * - 이력서 작성: 회원 누구나 (1인 1이력서, upsert)
  * - 연락처(contact)는 로그인 회원에게만 내려간다. (모든 API 가 로그인 필요)
  */
 const { pool } = require('../config/database');
 const { displayAge } = require('../utils/adultPolicy');
+const { isAdmin } = require('../middlewares/authMiddleware');
 const { HttpError, text, int, oneOf, paging } = require('../utils/http');
 
 const REGIONS = ['강남', '서초', '송파', '홍대/신촌', '건대', '영등포', '서울기타', '인천', '경기', '부산', '대구', '대전', '광주', '울산', '기타'];
@@ -19,7 +20,7 @@ function meta(_req, res) {
 }
 
 function canEdit(user, ownerId) {
-  return user.member_type === 'admin' || Number(user.id) === Number(ownerId);
+  return isAdmin(user) || Number(user.id) === Number(ownerId);
 }
 
 function birthDateToDigits(value) {
@@ -90,8 +91,8 @@ async function getJob(req, res) {
   const id = int(req.params.id, { min: 1, nullable: false, label: '공고 번호' });
   const [rows] = await pool.query(
     `SELECT j.*, u.nickname FROM job_posts j JOIN users u ON u.id = j.user_id
-      WHERE j.id = ? AND (j.status <> 'hidden' OR j.user_id = ? OR ? = 'admin') LIMIT 1`,
-    [id, req.user.id, req.user.member_type]
+      WHERE j.id = ? AND (j.status <> 'hidden' OR j.user_id = ? OR ? = 1) LIMIT 1`,
+    [id, req.user.id, isAdmin(req.user) ? 1 : 0]
   );
   if (!rows[0]) throw new HttpError(404, '공고를 찾을 수 없습니다.');
   await pool.query('UPDATE job_posts SET view_count = view_count + 1 WHERE id = ?', [id]);
@@ -197,8 +198,8 @@ async function getResume(req, res) {
   const id = int(req.params.id, { min: 1, nullable: false, label: '이력서 번호' });
   const [rows] = await pool.query(
     `SELECT r.*, u.nickname, u.birth_date FROM resumes r JOIN users u ON u.id = r.user_id
-      WHERE r.id = ? AND (r.is_public = 1 OR r.user_id = ? OR ? = 'admin') LIMIT 1`,
-    [id, req.user.id, req.user.member_type]
+      WHERE r.id = ? AND (r.is_public = 1 OR r.user_id = ? OR ? = 1) LIMIT 1`,
+    [id, req.user.id, isAdmin(req.user) ? 1 : 0]
   );
   if (!rows[0]) throw new HttpError(404, '이력서를 찾을 수 없습니다.');
   await pool.query('UPDATE resumes SET view_count = view_count + 1 WHERE id = ?', [id]);

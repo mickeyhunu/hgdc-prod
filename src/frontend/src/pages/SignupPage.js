@@ -2,12 +2,15 @@
  * 파일 역할: KCP 본인인증(19세 확인) → 회원정보 입력 → 가입 페이지.
  *
  * 1) /api/auth/identity 로 거래등록 → call_url 로 팝업 form POST (KCP 표준 방식)
- * 2) 콜백 페이지가 postMessage(HGDC_IDENTITY_RESULT) 를 보내면 /api/auth/identity/:key 로 마스킹된 결과 확인
- * 3) 성인이고 미가입자면 가입 폼 노출. 이름/생년월일은 서버가 인증 결과에서 직접 사용한다.
+ * 2) 콜백 페이지가 postMessage(HGDC_IDENTITY_RESULT) 를 보내면 /api/auth/identity/:key 로 인증 결과 확인
+ * 3) 성인이고 미가입자면 가입 폼 노출. 이름/생년월일/휴대전화는 인증값 자동입력(수정 불가)이며,
+ *    아이디/닉네임은 /api/auth/check 로 중복확인 후 가입할 수 있다.
+ *    가입 시에도 서버는 화면 값이 아닌 인증 결과를 직접 저장한다.
  */
 import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api, session } from '../api.js';
+import AgreementBox from '../components/AgreementBox.js';
 
 function openKcpWindow(callUrl, regCertKey) {
   const width = 410;
@@ -34,6 +37,7 @@ function openKcpWindow(callUrl, regCertKey) {
 }
 
 export default {
+  components: { AgreementBox },
   setup() {
     const route = useRoute();
     const router = useRouter();
@@ -42,9 +46,29 @@ export default {
     const regCertKey = ref('');
     const error = ref('');
     const form = reactive({
-      memberType: 'player', loginId: '', password: '', passwordConfirm: '', nickname: '',
-      agreeTerms: false, agreePrivacy: false
+      loginId: '', password: '', passwordConfirm: '', nickname: '', email: '',
+      agreeTerms: false, agreePrivacy: false, agreeMarketing: false
     });
+    // 아이디/닉네임 중복확인 결과: { value, available, message }
+    const checks = reactive({ loginId: null, nickname: null });
+
+    async function checkField(field) {
+      const value = form[field].trim();
+      if (!value) {
+        checks[field] = null;
+        return;
+      }
+      try {
+        const result = await api(`/auth/check?field=${field}&value=${encodeURIComponent(value)}`);
+        if (form[field].trim() === value) checks[field] = { value, ...result };
+      } catch (requestError) {
+        checks[field] = { value, available: false, message: requestError.message };
+      }
+    }
+
+    function isChecked(field) {
+      return checks[field]?.available && checks[field].value === form[field].trim();
+    }
 
     async function loadIdentity(key) {
       regCertKey.value = key;
@@ -87,12 +111,17 @@ export default {
         error.value = '비밀번호가 일치하지 않습니다.';
         return;
       }
+      await Promise.all(['loginId', 'nickname'].filter((field) => !isChecked(field)).map(checkField));
+      if (!isChecked('loginId') || !isChecked('nickname')) {
+        error.value = '아이디와 닉네임 중복확인을 통과해야 가입할 수 있습니다.';
+        return;
+      }
       try {
         const { passwordConfirm, ...body } = form;
         await api('/auth/signup', { method: 'POST', body: { ...body, regCertKey: regCertKey.value } });
         const { user } = await api('/auth/me');
         session.user = user;
-        router.replace(form.memberType === 'player' ? '/resumes/mine/edit' : '/jobs/new');
+        router.replace('/');
       } catch (requestError) {
         error.value = requestError.message;
       }
@@ -108,7 +137,7 @@ export default {
     });
     onBeforeUnmount(() => window.removeEventListener('message', onMessage));
 
-    return { step, identity, error, form, startIdentity, submit };
+    return { step, identity, error, form, checks, checkField, isChecked, startIdentity, submit };
   },
   template: `
     <section class="gate">
@@ -143,25 +172,45 @@ export default {
         </template>
 
         <form v-else class="stack" @submit.prevent="submit">
-          <div class="verified">✔ {{ identity.maskedName }}님 · 만 {{ identity.age }}세 본인인증 완료</div>
+          <label class="field">
+            <span>아이디 <b class="req">*</b></span>
+            <input v-model.trim="form.loginId" placeholder="영문 소문자/숫자 4~20자" autocomplete="username" required
+              @input="checks.loginId = null" @blur="checkField('loginId')" />
+            <small v-if="checks.loginId" :class="checks.loginId.available ? 'ok-text' : 'error'">{{ checks.loginId.message }}</small>
+          </label>
+          <label class="field">
+            <span>비밀번호 <b class="req">*</b></span>
+            <input v-model="form.password" type="password" placeholder="8자 이상" autocomplete="new-password" required />
+          </label>
+          <label class="field">
+            <span>비밀번호 확인 <b class="req">*</b></span>
+            <input v-model="form.passwordConfirm" type="password" placeholder="비밀번호를 한 번 더 입력" autocomplete="new-password" required />
+            <small class="error" v-if="form.passwordConfirm && form.password !== form.passwordConfirm">비밀번호가 일치하지 않습니다.</small>
+          </label>
+          <label class="field">
+            <span>이름</span>
+            <input :value="identity.profile.name" readonly tabindex="-1" />
+          </label>
+          <label class="field">
+            <span>닉네임 <b class="req">*</b></span>
+            <input v-model.trim="form.nickname" placeholder="한글/영문/숫자 2~12자" required
+              @input="checks.nickname = null" @blur="checkField('nickname')" />
+            <small v-if="checks.nickname" :class="checks.nickname.available ? 'ok-text' : 'error'">{{ checks.nickname.message }}</small>
+          </label>
+          <label class="field">
+            <span>생년월일</span>
+            <input :value="identity.profile.birthDate" readonly tabindex="-1" />
+          </label>
+          <label class="field">
+            <span>휴대전화</span>
+            <input :value="identity.profile.phone" readonly tabindex="-1" />
+          </label>
+          <label class="field">
+            <span>이메일 <small class="muted">(선택)</small></span>
+            <input v-model.trim="form.email" type="email" placeholder="example@email.com" autocomplete="email" />
+          </label>
 
-          <label class="label">회원 유형</label>
-          <div class="segmented">
-            <label :class="{ on: form.memberType === 'player' }">
-              <input type="radio" value="player" v-model="form.memberType" /> 선수 (구직)
-            </label>
-            <label :class="{ on: form.memberType === 'business' }">
-              <input type="radio" value="business" v-model="form.memberType" /> 업소 (구인)
-            </label>
-          </div>
-
-          <input v-model.trim="form.loginId" placeholder="아이디 (영문 소문자/숫자 4~20자)" autocomplete="username" required />
-          <input v-model="form.password" type="password" placeholder="비밀번호 (8자 이상)" autocomplete="new-password" required />
-          <input v-model="form.passwordConfirm" type="password" placeholder="비밀번호 확인" autocomplete="new-password" required />
-          <input v-model.trim="form.nickname" placeholder="닉네임 (2~12자)" required />
-
-          <label class="check"><input type="checkbox" v-model="form.agreeTerms" /> (필수) 이용약관 동의</label>
-          <label class="check"><input type="checkbox" v-model="form.agreePrivacy" /> (필수) 개인정보 수집·이용 동의</label>
+          <AgreementBox :form="form" />
 
           <p class="error" v-if="error">{{ error }}</p>
           <button class="btn primary">가입하기</button>

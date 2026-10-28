@@ -6,13 +6,19 @@ CREATE TABLE IF NOT EXISTS users (
   login_id        VARCHAR(30)  NOT NULL,
   password_hash   VARCHAR(255) NOT NULL,
   nickname        VARCHAR(20)  NOT NULL,
-  member_type     ENUM('player','business','admin') NOT NULL DEFAULT 'player',
+  is_admin        TINYINT(1)   NOT NULL DEFAULT 0,
+  -- 구인공고 작성 자격: 사업자등록증·영업허가증 제출/승인 상태 (none=미제출)
+  business_status ENUM('none','pending','approved','rejected') NOT NULL DEFAULT 'none',
   -- 본인인증 결과 (CI 원문은 저장하지 않고 SHA-256 해시만 저장해 중복가입 방지에 사용)
   ci_hash         CHAR(64)     NOT NULL,
   real_name       VARCHAR(50)  NOT NULL,
   birth_date      DATE         NOT NULL,
   gender          ENUM('M','F','') NOT NULL DEFAULT '',
   phone           VARCHAR(20)  NOT NULL DEFAULT '',
+  email           VARCHAR(100) NOT NULL DEFAULT '',
+  -- (선택) 마케팅 정보 및 SMS 수신 동의. 정보통신망법상 동의 일시를 남기고 주기적으로 재확인해야 한다.
+  marketing_agreed    TINYINT(1) NOT NULL DEFAULT 0,
+  marketing_agreed_at DATETIME   NULL,
   verified_at     DATETIME     NOT NULL,
   status          ENUM('active','suspended','withdrawn') NOT NULL DEFAULT 'active',
   last_login_at   DATETIME     NULL,

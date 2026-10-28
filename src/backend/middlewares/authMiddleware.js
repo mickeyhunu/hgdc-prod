@@ -29,7 +29,7 @@ function cookieOptions(req, maxAgeMs) {
 
 function setSessionCookie(req, res, user) {
   const expiresIn = Number(process.env.JWT_EXPIRES_IN_SECONDS) || 7 * 24 * 60 * 60;
-  const token = jwt.sign({ sub: user.id, type: user.member_type }, expiresIn);
+  const token = jwt.sign({ sub: user.id }, expiresIn);
   res.cookie(SESSION_COOKIE_NAME, token, cookieOptions(req, expiresIn * 1000));
 }
 
@@ -45,7 +45,7 @@ async function attachUser(req, _res, next) {
     if (!payload?.sub) return next();
 
     const [rows] = await pool.query(
-      `SELECT id, login_id, nickname, member_type, birth_date, status
+      `SELECT id, login_id, nickname, is_admin, business_status, birth_date, status
          FROM users WHERE id = ? LIMIT 1`,
       [payload.sub]
     );
@@ -63,12 +63,18 @@ function requireMember(req, res, next) {
   return next();
 }
 
-function requireMemberType(...types) {
-  return (req, res, next) => {
-    if (!req.user) return requireMember(req, res, next);
-    if (req.user.member_type === 'admin' || types.includes(req.user.member_type)) return next();
-    return res.status(403).json({ message: '이용 권한이 없는 회원 유형입니다.' });
-  };
+function isAdmin(user) {
+  return Boolean(user?.is_admin);
+}
+
+// 구인공고 작성/관리: 사업자등록증·영업허가증 제출 후 승인된 회원(또는 관리자)만
+function requireBusinessApproved(req, res, next) {
+  if (!req.user) return requireMember(req, res, next);
+  if (isAdmin(req.user) || req.user.business_status === 'approved') return next();
+  return res.status(403).json({
+    message: '구인공고는 사업자등록증·영업허가증 제출 후 승인된 회원만 등록할 수 있습니다.',
+    code: 'BUSINESS_NOT_APPROVED'
+  });
 }
 
 // JSON 이 아닌 상태변경 요청을 차단해 단순 폼 기반 CSRF 를 막는다. (SameSite=Lax 쿠키와 함께 사용)
@@ -86,6 +92,7 @@ module.exports = {
   clearSessionCookie,
   attachUser,
   requireMember,
-  requireMemberType,
+  isAdmin,
+  requireBusinessApproved,
   requireJsonForMutations
 };

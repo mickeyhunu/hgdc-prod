@@ -9,7 +9,7 @@ const express = require('express');
 const auth = require('../controllers/authController');
 const jobs = require('../controllers/jobController');
 const community = require('../controllers/communityController');
-const { requireMember, requireMemberType } = require('../middlewares/authMiddleware');
+const { requireMember, requireBusinessApproved } = require('../middlewares/authMiddleware');
 const { asyncHandler: h } = require('../utils/http');
 
 const router = express.Router();
@@ -17,6 +17,7 @@ const router = express.Router();
 // ── 인증 ──
 router.post('/auth/identity', h(auth.requestIdentity));
 router.get('/auth/identity/:regCertKey', h(auth.getIdentityResult));
+router.get('/auth/check', h(auth.checkAvailability));
 router.post('/auth/signup', h(auth.signup));
 router.post('/auth/login', h(auth.login));
 router.post('/auth/logout', auth.logout);
@@ -34,17 +35,17 @@ router.get('/community/posts', h(community.listPosts));
 router.use(requireMember);
 
 // 구인 (업소 공고)
-router.get('/jobs/mine', requireMemberType('business'), h(jobs.myJobs));
+router.get('/jobs/mine', h(jobs.myJobs));
 router.get('/jobs/:id', h(jobs.getJob));
-router.post('/jobs', requireMemberType('business'), h(jobs.createJob));
-router.put('/jobs/:id', requireMemberType('business'), h(jobs.updateJob));
-router.delete('/jobs/:id', requireMemberType('business'), h(jobs.deleteJob));
-router.post('/jobs/:id/bump', requireMemberType('business'), h(jobs.bumpJob));
+router.post('/jobs', requireBusinessApproved, h(jobs.createJob));
+router.put('/jobs/:id', requireBusinessApproved, h(jobs.updateJob));
+router.delete('/jobs/:id', h(jobs.deleteJob));
+router.post('/jobs/:id/bump', requireBusinessApproved, h(jobs.bumpJob));
 
-// 구직 (선수 이력서)
-router.get('/resumes/mine', requireMemberType('player'), h(jobs.getMyResume));
-router.put('/resumes/mine', requireMemberType('player'), h(jobs.upsertMyResume));
-router.post('/resumes/mine/bump', requireMemberType('player'), h(jobs.bumpMyResume));
+// 구직 (이력서) - 회원 누구나 1인 1이력서
+router.get('/resumes/mine', h(jobs.getMyResume));
+router.put('/resumes/mine', h(jobs.upsertMyResume));
+router.post('/resumes/mine/bump', h(jobs.bumpMyResume));
 router.get('/resumes/:id', h(jobs.getResume));
 
 // 커뮤니티

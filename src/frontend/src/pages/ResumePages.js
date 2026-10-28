@@ -39,7 +39,7 @@ export const ResumeListPage = {
     <section>
       <div class="page-head">
         <h2>구직 <small>선수 프로필</small></h2>
-        <router-link v-if="['player','admin'].includes(session.user?.memberType)" to="/resumes/mine/edit" class="btn primary sm">내 이력서</router-link>
+        <router-link v-if="session.user" to="/resumes/mine/edit" class="btn primary sm">내 이력서</router-link>
       </div>
       <form class="filters" @submit.prevent="apply()">
         <select v-model="region" @change="apply()"><option value="">전체 지역</option><option v-for="r in regions" :key="r">{{ r }}</option></select>
@@ -114,7 +114,6 @@ export const ResumeFormPage = {
 
     onMounted(async () => {
       regions.value = (await api('/jobs/meta')).regions;
-      if (session.user.memberType !== 'player') return;
       const { resume } = await api('/resumes/mine');
       if (resume) {
         existingId.value = resume.id;
@@ -155,8 +154,7 @@ export const ResumeFormPage = {
   template: `
     <section class="form-page">
       <h2>내 이력서</h2>
-      <p class="notice" v-if="session.user.memberType !== 'player'">이력서는 선수 회원만 등록할 수 있습니다.</p>
-      <form v-else class="stack" @submit.prevent="submit">
+      <form class="stack" @submit.prevent="submit">
         <p class="muted">나이는 본인인증 정보로 자동 표시됩니다. 실명·생년월일은 공개되지 않습니다.</p>
         <input v-model.trim="form.title" maxlength="100" placeholder="한 줄 소개 (예: 강남권 경력 2년, 성실합니다)" required />
         <div class="row-2">
